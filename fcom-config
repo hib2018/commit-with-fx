@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Configure fcom's local repository staging scope."""
+import subprocess
+import sys
+
+if len(sys.argv) != 2 or sys.argv[1] not in ('all', 'staged'):
+    sys.exit('Usage: fcom-config all|staged (all: include untracked files; staged: staged changes only)')
+result = subprocess.run(['git', 'config', '--local', 'fcom.scope', sys.argv[1]])
+sys.exit(result.returncode)
