@@ -19,7 +19,7 @@ fcom-config all         # Default: staged, unstaged, and untracked changes
 fcom-config staged      # Staged changes only, for this repository
 ```
 
-`fcom --tree all` processes worktrees of the same repository sequentially, including the current worktree. Clean worktrees are skipped. Each worktree uses the existing scope setting and has its own approval prompt; cancellation skips that worktree, while an error stops the run. Commits already created in earlier worktrees remain.
+`fcom --tree all` processes worktrees of the same repository sequentially, including the current worktree. Clean worktrees are skipped. Each worktree uses the existing scope setting. All plans are displayed before a single final approval prompt; cancellation cancels the entire run. Commit numbers for JSON name edits are consecutive across worktrees. Planning errors stop before any commits are created. Errors during execution stop the run, but commits already created remain.
 
 `fcom-config` sets the local Git config key `fcom.scope`. Ignored files are excluded. `fcom` sends the diff to fx in a single request; check for secrets before running it. A loading indicator appears while fx generates the plan.
 
