@@ -128,10 +128,11 @@ class FcomTest(unittest.TestCase):
         subdir = other / 'subdir'
         subdir.mkdir()
         result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=subdir,
-                      env=self.env, input='y\ny\n')
+                      env=self.env, input='y\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count('Worktree:'), 2)
-        self.assertEqual(result.stdout.count('Commit these changes?'), 2)
+        self.assertEqual(result.stdout.count('Commit these changes?'), 1)
+        self.assertLess(result.stdout.index('4. docs: second'), result.stdout.index('Commit these changes?'))
         for root in (self.repo, other):
             status = call('git', 'status', '--porcelain', cwd=root, env=self.env)
             self.assertEqual(status.returncode, 0, status.stderr)
@@ -147,7 +148,7 @@ class FcomTest(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), 'No changes to commit.')
         self.assertNotIn('Generating commit plan...', result.stderr)
 
-    def test_tree_all_cancellation_continues_to_next_worktree(self):
+    def test_tree_all_cancellation_keeps_all_worktrees_unchanged(self):
         other = Path(self.tmp.name) / 'other'
         self.git('worktree', 'add', '-qb', 'other', str(other))
         for root in (self.repo, other):
@@ -155,11 +156,15 @@ class FcomTest(unittest.TestCase):
             (root / 'two.txt').write_text('untracked\n')
         before = self.git('status', '--porcelain')
         result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=self.repo,
-                      env=self.env, input='n\ny\n')
+                      env=self.env, input='n\n')
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count('Worktree:'), 2)
+        self.assertEqual(result.stdout.count('Commit these changes?'), 1)
         self.assertEqual(self.git('status', '--porcelain'), before)
         self.assertEqual(self.git('log', '-1', '--format=%s'), 'initial')
-        self.assertEqual(self.git('log', 'other', '-1', '--format=%s'), 'docs: second')
+        self.assertEqual(self.git('log', 'other', '-1', '--format=%s'), 'initial')
+        status = call('git', 'status', '--porcelain', cwd=other, env=self.env)
+        self.assertEqual(status.stdout.strip(), before)
 
     def test_tree_all_stops_on_failure(self):
         other = Path(self.tmp.name) / 'other'
@@ -172,6 +177,55 @@ class FcomTest(unittest.TestCase):
                       env=env, input='y\ny\n')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout.count('Worktree:'), 1)
+        self.assertEqual(self.git('log', '-1', '--format=%s'), 'initial')
+        self.assertEqual(self.git('log', 'other', '-1', '--format=%s'), 'initial')
+
+    def test_tree_all_edits_use_global_commit_numbers(self):
+        other = Path(self.tmp.name) / 'other'
+        self.git('worktree', 'add', '-qb', 'other', str(other))
+        for root in (self.repo, other):
+            (root / 'one.txt').write_text('new\n')
+            (root / 'two.txt').write_text('untracked\n')
+        result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=self.repo,
+                      env=self.env, input='{"1":"fix: main","3":"fix: other"}\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count('Commit these changes?'), 1)
+        self.assertEqual(self.git('log', '-2', '--format=%s').splitlines(),
+                         ['docs: second', 'fix: main'])
+        self.assertEqual(self.git('log', 'other', '-2', '--format=%s').splitlines(),
+                         ['docs: second', 'fix: other'])
+
+    def test_tree_all_later_plan_failure_makes_no_commits(self):
+        other = Path(self.tmp.name) / 'other'
+        self.git('worktree', 'add', '-qb', 'other', str(other))
+        for root in (self.repo, other):
+            (root / 'one.txt').write_text('new\n')
+            (root / 'two.txt').write_text('untracked\n')
+        fx = self.bin / 'fx'
+        fx.write_text(fx.read_text().replace('if os.environ.get("FX_FAIL"):',
+                                            'if os.getcwd().endswith("/other"):'))
+        result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=self.repo,
+                      env=self.env, input='y\n')
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout.count('Worktree:'), 2)
+        self.assertNotIn('Commit these changes?', result.stdout)
+        self.assertEqual(self.git('log', '-1', '--format=%s'), 'initial')
+        self.assertEqual(self.git('log', 'other', '-1', '--format=%s'), 'initial')
+
+    def test_tree_all_rechecks_earlier_worktree_before_committing(self):
+        other = Path(self.tmp.name) / 'other'
+        self.git('worktree', 'add', '-qb', 'other', str(other))
+        for root in (self.repo, other):
+            (root / 'one.txt').write_text('new\n')
+            (root / 'two.txt').write_text('untracked\n')
+        fx = self.bin / 'fx'
+        fx.write_text(fx.read_text().replace('p=sys.stdin.read()',
+            'p=sys.stdin.read()\nif os.getcwd().endswith("/other"):\n'
+            f' open({str(self.repo / "one.txt")!r}, "w").write("concurrent change\\n")'))
+        result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=self.repo,
+                      env=self.env, input='y\n')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('repository changed', result.stderr)
         self.assertEqual(self.git('log', '-1', '--format=%s'), 'initial')
         self.assertEqual(self.git('log', 'other', '-1', '--format=%s'), 'initial')
 
