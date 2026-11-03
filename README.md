@@ -14,9 +14,12 @@ export PATH="/path/to/commit-with-fx:$PATH"
 
 ```sh
 fcom                    # Group and commit changes in the current repository
+fcom --tree all         # Run in every worktree with uncommitted changes
 fcom-config all         # Default: staged, unstaged, and untracked changes
 fcom-config staged      # Staged changes only, for this repository
 ```
+
+`fcom --tree all` processes worktrees of the same repository sequentially, including the current worktree. Clean worktrees are skipped. Each worktree uses the existing scope setting and has its own approval prompt; cancellation skips that worktree, while an error stops the run. Commits already created in earlier worktrees remain.
 
 `fcom-config` sets the local Git config key `fcom.scope`. Ignored files are excluded. `fcom` sends the diff to fx in a single request; check for secrets before running it. A loading indicator appears while fx generates the plan.
 
