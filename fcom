@@ -105,8 +105,35 @@ def units_from_diff(diff, names):
 
 
 def main():
-    if len(sys.argv) != 1:
-        raise Stop('Usage: fcom (configure with fcom-config)')
+    if sys.argv[1:] == ['--tree', 'all']:
+        original = Path.cwd()
+        worktrees = git('worktree', 'list', '--porcelain', '-z').split(b'\0\0')
+        found = False
+        try:
+            for record in worktrees:
+                fields = record.split(b'\0')
+                if not fields[0].startswith(b'worktree ') or b'bare' in fields:
+                    continue
+                root = Path(os.fsdecode(fields[0][len(b'worktree '):]))
+                if not root.is_dir():
+                    continue
+                os.chdir(root)
+                if not git('status', '--porcelain=v1', '-z', '--untracked-files=all'):
+                    continue
+                found = True
+                print(f'\nWorktree: {root}', flush=True)
+                commit_worktree()
+        finally:
+            os.chdir(original)
+        if not found:
+            print('No changes to commit.')
+    elif not sys.argv[1:]:
+        commit_worktree()
+    else:
+        raise Stop('Usage: fcom [--tree all] (configure with fcom-config)')
+
+
+def commit_worktree():
     root = Path(os.fsdecode(git('rev-parse', '--show-toplevel').strip()))
     os.chdir(root)
     for state in ('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'):

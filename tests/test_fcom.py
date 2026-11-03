@@ -116,6 +116,70 @@ class FcomTest(unittest.TestCase):
         self.assertIn('staged', result.stderr)
         self.assertEqual(self.git('log', '-1', '--format=%s'), 'initial')
 
+    def test_tree_all_commits_dirty_worktrees_and_skips_clean(self):
+        other = Path(self.tmp.name) / 'other worktree\nwith spaces'
+        clean = Path(self.tmp.name) / 'clean'
+        self.git('worktree', 'add', '-qb', 'other', str(other))
+        self.git('worktree', 'add', '-qb', 'clean', str(clean))
+        for root in (self.repo, other):
+            (root / 'one.txt').write_text('new\n')
+            (root / 'two.txt').write_text('untracked\n')
+        self.git('add', 'one.txt')
+        subdir = other / 'subdir'
+        subdir.mkdir()
+        result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=subdir,
+                      env=self.env, input='y\ny\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count('Worktree:'), 2)
+        self.assertEqual(result.stdout.count('Commit these changes?'), 2)
+        for root in (self.repo, other):
+            status = call('git', 'status', '--porcelain', cwd=root, env=self.env)
+            self.assertEqual(status.returncode, 0, status.stderr)
+            self.assertEqual(status.stdout, '')
+            log = call('git', 'log', '-2', '--format=%s', cwd=root, env=self.env)
+            self.assertEqual(log.stdout.splitlines(), ['docs: second', 'feat: first'])
+        self.assertEqual(self.git('log', 'clean', '-1', '--format=%s'), 'initial')
+
+    def test_tree_all_without_changes_does_not_call_fx(self):
+        env = dict(self.env, FX_FAIL='1')
+        result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=self.repo, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'No changes to commit.')
+        self.assertNotIn('Generating commit plan...', result.stderr)
+
+    def test_tree_all_cancellation_continues_to_next_worktree(self):
+        other = Path(self.tmp.name) / 'other'
+        self.git('worktree', 'add', '-qb', 'other', str(other))
+        for root in (self.repo, other):
+            (root / 'one.txt').write_text('new\n')
+            (root / 'two.txt').write_text('untracked\n')
+        before = self.git('status', '--porcelain')
+        result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=self.repo,
+                      env=self.env, input='n\ny\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.git('status', '--porcelain'), before)
+        self.assertEqual(self.git('log', '-1', '--format=%s'), 'initial')
+        self.assertEqual(self.git('log', 'other', '-1', '--format=%s'), 'docs: second')
+
+    def test_tree_all_stops_on_failure(self):
+        other = Path(self.tmp.name) / 'other'
+        self.git('worktree', 'add', '-qb', 'other', str(other))
+        for root in (self.repo, other):
+            (root / 'one.txt').write_text('new\n')
+            (root / 'two.txt').write_text('untracked\n')
+        env = dict(self.env, FX_FAIL='1')
+        result = call(str(ROOT / 'fcom'), '--tree', 'all', cwd=self.repo,
+                      env=env, input='y\ny\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.count('Worktree:'), 1)
+        self.assertEqual(self.git('log', '-1', '--format=%s'), 'initial')
+        self.assertEqual(self.git('log', 'other', '-1', '--format=%s'), 'initial')
+
+    def test_invalid_tree_option(self):
+        result = call(str(ROOT / 'fcom'), '--tree', 'other', cwd=self.repo, env=self.env)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('Usage: fcom [--tree all]', result.stderr)
+
     def test_staged_setting(self):
         (self.repo / 'one.txt').write_text('new\n')
         self.git('add', 'one.txt')
